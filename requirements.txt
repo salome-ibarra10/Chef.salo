@@ -3,3 +3,5 @@ google-generativeai
 python-dotenv
 tavily-python
 pillow
+pyttsx3
+# pygame  # Opcional - mejora la reproducción de audio en Windows
