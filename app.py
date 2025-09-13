@@ -7,6 +7,7 @@ import time
 import tempfile
 import os
 import platform
+from speech_components import create_speech_component, speak_with_browser, pause_browser_speech, resume_browser_speech, stop_browser_speech
 
 # Intentar importar pygame, pero hacer que sea opcional
 try:
@@ -15,6 +16,23 @@ try:
 except ImportError:
     PYGAME_AVAILABLE = False
     print("Pygame no está disponible, usando solo pyttsx3")
+
+# Verificar si estamos en un entorno de nube (Streamlit Cloud)
+IS_CLOUD_ENV = os.getenv('STREAMLIT_SERVER_HEADLESS', 'false').lower() == 'true' or \
+               'streamlit.io' in os.getenv('STREAMLIT_SERVER_BASE_URL', '') or \
+               os.getenv('STREAMLIT_RUNTIME_ENVIRONMENT') == 'cloud' or \
+               os.getenv('STREAMLIT_CLOUD') == 'true' or \
+               not platform.system() == 'Windows'  # Asumir nube si no es Windows local
+
+# Forzar modo nube para pruebas en Streamlit Cloud
+if 'streamlit.app' in os.getenv('STREAMLIT_SERVER_BASE_URL', '') or \
+   'share.streamlit.io' in os.getenv('STREAMLIT_SERVER_BASE_URL', ''):
+    IS_CLOUD_ENV = True
+
+print(f"Entorno de nube detectado: {IS_CLOUD_ENV}")
+print(f"Sistema operativo: {platform.system()}")
+print(f"STREAMLIT_SERVER_HEADLESS: {os.getenv('STREAMLIT_SERVER_HEADLESS')}")
+print(f"STREAMLIT_SERVER_BASE_URL: {os.getenv('STREAMLIT_SERVER_BASE_URL')}")
 
 st.set_page_config(layout="centered")
 
@@ -267,12 +285,15 @@ def test_tts_engine():
         return False
 
 def main():
+    # Inicializar componentes de JavaScript para Web Speech API
+    create_speech_component()
+
     # --- Header Centrado ---
     with st.container():
         st.image("logo.png", width=200) # Logo centrado y con tamaño fijo
         st.title("Chef AI 🍳")
         st.subheader("Sube una foto de tus ingredientes y descubre una receta increíble.")
-    
+
     st.divider()
 
     uploaded_file = st.file_uploader(
@@ -358,88 +379,135 @@ def main():
 
         # Sección de controles de audio
         st.subheader("🔊 Controles de Audio")
-        
-        # Obtener el estado actual del audio
-        audio_manager = st.session_state.audio_manager
-        status = audio_manager.get_status()
-        
-        # Mostrar el estado actual
-        status_colors = {
-            "detenido": "⚫",
-            "reproduciendo": "🟢",
-            "pausado": "🟡"
-        }
-        st.info(f"Estado: {status_colors.get(status, '⚫')} **{status.upper()}**")
-        
-        # Botón de diagnóstico
-        if st.button("🔧 Probar Audio", key="test_audio"):
-            with st.spinner("Probando motor de audio..."):
-                if test_tts_engine():
-                    st.success("✅ Motor de audio funcionando correctamente")
-                else:
-                    st.error("❌ Error con el motor de audio. Verifica que pyttsx3 esté instalado correctamente.")
-        
-        # Crear columnas para los botones
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            # Botón de reproducir/iniciar
-            if st.button("▶️ Reproducir", key="play_button",
-                        disabled=audio_manager.is_playing and not audio_manager.is_paused):
-                try:
-                    # Preparar el texto de la receta
-                    text_parts = audio_manager.prepare_recipe_text(recipe_data)
-                    
-                    # Detener cualquier reproducción anterior
-                    audio_manager.stop_audio()
-                    
-                    # Verificar que el motor TTS funcione antes de iniciar
+
+        # Determinar qué sistema de audio usar
+        if IS_CLOUD_ENV:
+            # Usar Web Speech API para entornos de nube
+            st.info("🌐 Usando síntesis de voz del navegador (Web Speech API)")
+
+            # Verificar compatibilidad del navegador
+            st.info("💡 **Compatibilidad:** Asegúrate de usar Chrome, Firefox, Safari o Edge para la mejor experiencia de voz.")
+
+            # Crear columnas para los botones
+            col1, col2, col3, col4 = st.columns(4)
+
+            with col1:
+                # Botón de reproducir/iniciar
+                if st.button("▶️ Reproducir", key="play_button_browser"):
+                    try:
+                        # Preparar el texto completo de la receta
+                        text_parts = st.session_state.audio_manager.prepare_recipe_text(recipe_data)
+                        full_text = " ".join(text_parts)
+
+                        # Usar Web Speech API
+                        speak_with_browser(full_text)
+                        st.success("✅ Reproducción iniciada en el navegador")
+                    except Exception as e:
+                        st.error(f"❌ Error al iniciar la reproducción: {str(e)}")
+
+            with col2:
+                # Botón de pausar
+                if st.button("⏸️ Pausar", key="pause_button_browser"):
+                    pause_browser_speech()
+                    st.info("⏸️ Reproducción pausada")
+
+            with col3:
+                # Botón de reanudar
+                if st.button("▶️ Reanudar", key="resume_button_browser"):
+                    resume_browser_speech()
+                    st.success("▶️ Reproducción reanudada")
+
+            with col4:
+                # Botón de detener
+                if st.button("⏹️ Detener", key="stop_button_browser"):
+                    stop_browser_speech()
+                    st.info("⏹️ Reproducción detenida")
+
+            st.info("💡 **Nota:** La reproducción se controla desde el navegador. Asegúrate de que tu navegador soporte la Web Speech API.")
+
+        else:
+            # Usar pyttsx3 para entornos locales
+            # Obtener el estado actual del audio
+            audio_manager = st.session_state.audio_manager
+            status = audio_manager.get_status()
+
+            # Mostrar el estado actual
+            status_colors = {
+                "detenido": "⚫",
+                "reproduciendo": "🟢",
+                "pausado": "🟡"
+            }
+            st.info(f"Estado: {status_colors.get(status, '⚫')} **{status.upper()}**")
+
+            # Botón de diagnóstico
+            if st.button("🔧 Probar Audio", key="test_audio"):
+                with st.spinner("Probando motor de audio..."):
                     if test_tts_engine():
-                        # Iniciar reproducción en un hilo separado
-                        threading.Thread(
-                            target=audio_manager.play_audio,
-                            args=(text_parts, 0),
-                            daemon=True
-                        ).start()
-                        st.success("✅ Reproducción iniciada")
-                        time.sleep(1)  # Pequeña pausa para que el usuario vea el mensaje
-                        st.rerun()
+                        st.success("✅ Motor de audio funcionando correctamente")
                     else:
-                        st.error("❌ El motor de audio no está disponible. Verifica que pyttsx3 esté instalado correctamente.")
-                        
-                except Exception as e:
-                    st.error(f"❌ Error al iniciar la reproducción: {str(e)}")
-                    st.info("💡 Consejo: En Windows, asegúrate de que el servicio de voz de Windows esté habilitado.")
-        
-        with col2:
-            # Botón de pausar
-            if st.button("⏸️ Pausar", key="pause_button",
-                        disabled=not audio_manager.is_playing or audio_manager.is_paused):
-                audio_manager.pause_audio()
-                st.rerun()
-        
-        with col3:
-            # Botón de reanudar
-            if st.button("▶️ Reanudar", key="resume_button",
-                        disabled=not audio_manager.is_paused):
-                audio_manager.resume_audio()
-                st.rerun()
-        
-        with col4:
-            # Botón de detener
-            if st.button("⏹️ Detener", key="stop_button",
-                        disabled=not audio_manager.is_playing):
-                audio_manager.stop_audio()
-                st.rerun()
-        
-        # Información adicional sobre la reproducción
-        if audio_manager.is_playing:
-            if audio_manager.is_paused:
-                st.warning("⏸️ Reproducción pausada")
-            else:
-                st.success(f"🟢 Reproduciendo... (Parte {audio_manager.current_part + 1} de {len(audio_manager.text_parts)})")
-        elif status == "detenido":
-            st.info("Listo para reproducir la receta")
+                        st.error("❌ Error con el motor de audio. Verifica que pyttsx3 esté instalado correctamente.")
+
+            # Crear columnas para los botones
+            col1, col2, col3, col4 = st.columns(4)
+
+            with col1:
+                # Botón de reproducir/iniciar
+                if st.button("▶️ Reproducir", key="play_button",
+                            disabled=audio_manager.is_playing and not audio_manager.is_paused):
+                    try:
+                        # Preparar el texto de la receta
+                        text_parts = audio_manager.prepare_recipe_text(recipe_data)
+
+                        # Detener cualquier reproducción anterior
+                        audio_manager.stop_audio()
+
+                        # Verificar que el motor TTS funcione antes de iniciar
+                        if test_tts_engine():
+                            # Iniciar reproducción en un hilo separado
+                            threading.Thread(
+                                target=audio_manager.play_audio,
+                                args=(text_parts, 0),
+                                daemon=True
+                            ).start()
+                            st.success("✅ Reproducción iniciada")
+                            time.sleep(1)  # Pequeña pausa para que el usuario vea el mensaje
+                            st.rerun()
+                        else:
+                            st.error("❌ El motor de audio no está disponible. Verifica que pyttsx3 esté instalado correctamente.")
+
+                    except Exception as e:
+                        st.error(f"❌ Error al iniciar la reproducción: {str(e)}")
+                        st.info("💡 Consejo: En Windows, asegúrate de que el servicio de voz de Windows esté habilitado.")
+
+            with col2:
+                # Botón de pausar
+                if st.button("⏸️ Pausar", key="pause_button",
+                            disabled=not audio_manager.is_playing or audio_manager.is_paused):
+                    audio_manager.pause_audio()
+                    st.rerun()
+
+            with col3:
+                # Botón de reanudar
+                if st.button("▶️ Reanudar", key="resume_button",
+                            disabled=not audio_manager.is_paused):
+                    audio_manager.resume_audio()
+                    st.rerun()
+
+            with col4:
+                # Botón de detener
+                if st.button("⏹️ Detener", key="stop_button",
+                            disabled=not audio_manager.is_playing):
+                    audio_manager.stop_audio()
+                    st.rerun()
+
+            # Información adicional sobre la reproducción
+            if audio_manager.is_playing:
+                if audio_manager.is_paused:
+                    st.warning("⏸️ Reproducción pausada")
+                else:
+                    st.success(f"🟢 Reproduciendo... (Parte {audio_manager.current_part + 1} de {len(audio_manager.text_parts)})")
+            elif status == "detenido":
+                st.info("Listo para reproducir la receta")
 
         st.divider()
 

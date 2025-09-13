@@ -1,4 +1,5 @@
 streamlit
+streamlit-components-v1
 google-generativeai
 python-dotenv
 tavily-python
