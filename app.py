@@ -1,21 +1,10 @@
 import streamlit as st
 from PIL import Image
 import utils
-import pyttsx3
 import threading
 import time
-import tempfile
 import os
 import platform
-from speech_components import create_speech_component, speak_with_browser, pause_browser_speech, resume_browser_speech, stop_browser_speech
-
-# Intentar importar pygame, pero hacer que sea opcional
-try:
-    import pygame
-    PYGAME_AVAILABLE = True
-except ImportError:
-    PYGAME_AVAILABLE = False
-    print("Pygame no está disponible, usando solo pyttsx3")
 
 # Verificar si estamos en un entorno de nube (Streamlit Cloud)
 IS_CLOUD_ENV = os.getenv('STREAMLIT_SERVER_HEADLESS', 'false').lower() == 'true' or \
@@ -33,6 +22,125 @@ print(f"Entorno de nube detectado: {IS_CLOUD_ENV}")
 print(f"Sistema operativo: {platform.system()}")
 print(f"STREAMLIT_SERVER_HEADLESS: {os.getenv('STREAMLIT_SERVER_HEADLESS')}")
 print(f"STREAMLIT_SERVER_BASE_URL: {os.getenv('STREAMLIT_SERVER_BASE_URL')}")
+
+# Función para crear componente de Web Speech API
+def create_web_speech_component():
+    """Crea un componente HTML con JavaScript para Web Speech API"""
+    speech_html = """
+    <div id="web-speech-component" style="display: none;">
+        <script>
+        let speechSynthesis = window.speechSynthesis;
+        let currentUtterance = null;
+        let isPlaying = false;
+        let isPaused = false;
+
+        // Función para verificar compatibilidad
+        function isSpeechSupported() {
+            return 'speechSynthesis' in window;
+        }
+
+        // Función para seleccionar voz en español
+        function selectSpanishVoice() {
+            const voices = speechSynthesis.getVoices();
+            let spanishVoice = voices.find(voice =>
+                voice.lang.startsWith('es') ||
+                voice.name.toLowerCase().includes('spanish') ||
+                voice.name.toLowerCase().includes('español')
+            );
+            return spanishVoice || voices[0];
+        }
+
+        // Función para hablar texto
+        function speakText(text) {
+            if (!isSpeechSupported()) {
+                alert('Tu navegador no soporta la síntesis de voz. Prueba con Chrome, Firefox o Safari.');
+                return;
+            }
+
+            // Detener reproducción anterior
+            stopSpeech();
+
+            currentUtterance = new SpeechSynthesisUtterance(text);
+            const spanishVoice = selectSpanishVoice();
+            if (spanishVoice) {
+                currentUtterance.voice = spanishVoice;
+                currentUtterance.lang = spanishVoice.lang;
+            }
+
+            currentUtterance.rate = 0.8;
+            currentUtterance.pitch = 1;
+            currentUtterance.volume = 0.9;
+
+            currentUtterance.onstart = function() {
+                isPlaying = true;
+                isPaused = false;
+                console.log('Reproducción iniciada');
+            };
+
+            currentUtterance.onend = function() {
+                isPlaying = false;
+                isPaused = false;
+                console.log('Reproducción terminada');
+            };
+
+            currentUtterance.onerror = function(event) {
+                isPlaying = false;
+                isPaused = false;
+                console.error('Error de síntesis:', event.error);
+                alert('Error al reproducir audio: ' + event.error);
+            };
+
+            setTimeout(() => {
+                speechSynthesis.speak(currentUtterance);
+            }, 100);
+        }
+
+        // Función para pausar
+        function pauseSpeech() {
+            if (speechSynthesis && speechSynthesis.pause && isPlaying && !isPaused) {
+                speechSynthesis.pause();
+                isPaused = true;
+                console.log('Reproducción pausada');
+            }
+        }
+
+        // Función para reanudar
+        function resumeSpeech() {
+            if (speechSynthesis && speechSynthesis.resume && isPaused) {
+                speechSynthesis.resume();
+                isPaused = false;
+                console.log('Reproducción reanudada');
+            }
+        }
+
+        // Función para detener
+        function stopSpeech() {
+            if (speechSynthesis) {
+                speechSynthesis.cancel();
+            }
+            currentUtterance = null;
+            isPlaying = false;
+            isPaused = false;
+            console.log('Reproducción detenida');
+        }
+
+        // Exponer funciones globalmente
+        window.webSpeechAPI = {
+            speakText: speakText,
+            pauseSpeech: pauseSpeech,
+            resumeSpeech: resumeSpeech,
+            stopSpeech: stopSpeech,
+            isSupported: isSpeechSupported
+        };
+
+        console.log('Web Speech API inicializada. Soporte:', isSpeechSupported());
+        </script>
+    </div>
+    """
+
+    # Usar st.components.v1.html que viene incluido con Streamlit
+    import streamlit.components.v1 as components
+    components.html(speech_html, height=0)
 
 st.set_page_config(layout="centered")
 
@@ -286,7 +394,7 @@ def test_tts_engine():
 
 def main():
     # Inicializar componentes de JavaScript para Web Speech API
-    create_speech_component()
+    create_web_speech_component()
 
     # --- Header Centrado ---
     with st.container():
@@ -450,8 +558,18 @@ def main():
                         text_parts = st.session_state.audio_manager.prepare_recipe_text(recipe_data)
                         full_text = " ".join(text_parts)
 
-                        # Usar Web Speech API
-                        speak_with_browser(full_text)
+                        # Usar Web Speech API con JavaScript directo
+                        js_code = f"""
+                        <script>
+                        if (window.webSpeechAPI && window.webSpeechAPI.isSupported()) {{
+                            window.webSpeechAPI.speakText(`{full_text.replace('`', '\\`')}`);
+                        }} else {{
+                            alert('Tu navegador no soporta la síntesis de voz. Prueba con Chrome, Firefox o Safari.');
+                        }}
+                        </script>
+                        """
+                        import streamlit.components.v1 as components
+                        components.html(js_code, height=0)
                         st.success("✅ Reproducción iniciada en el navegador")
                     except Exception as e:
                         st.error(f"❌ Error al iniciar la reproducción: {str(e)}")
@@ -459,19 +577,43 @@ def main():
             with col2:
                 # Botón de pausar
                 if st.button("⏸️ Pausar", key="pause_button_browser"):
-                    pause_browser_speech()
+                    js_code = """
+                    <script>
+                    if (window.webSpeechAPI) {
+                        window.webSpeechAPI.pauseSpeech();
+                    }
+                    </script>
+                    """
+                    import streamlit.components.v1 as components
+                    components.html(js_code, height=0)
                     st.info("⏸️ Reproducción pausada")
 
             with col3:
                 # Botón de reanudar
                 if st.button("▶️ Reanudar", key="resume_button_browser"):
-                    resume_browser_speech()
+                    js_code = """
+                    <script>
+                    if (window.webSpeechAPI) {
+                        window.webSpeechAPI.resumeSpeech();
+                    }
+                    </script>
+                    """
+                    import streamlit.components.v1 as components
+                    components.html(js_code, height=0)
                     st.success("▶️ Reproducción reanudada")
 
             with col4:
                 # Botón de detener
                 if st.button("⏹️ Detener", key="stop_button_browser"):
-                    stop_browser_speech()
+                    js_code = """
+                    <script>
+                    if (window.webSpeechAPI) {
+                        window.webSpeechAPI.stopSpeech();
+                    }
+                    </script>
+                    """
+                    import streamlit.components.v1 as components
+                    components.html(js_code, height=0)
                     st.info("⏹️ Reproducción detenida")
 
             st.info("💡 **Nota:** La reproducción se controla desde el navegador. Asegúrate de que tu navegador soporte la Web Speech API.")
