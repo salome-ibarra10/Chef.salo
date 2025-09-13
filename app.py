@@ -294,6 +294,12 @@ def main():
         st.title("Chef AI 🍳")
         st.subheader("Sube una foto de tus ingredientes y descubre una receta increíble.")
 
+        # Indicador de estado de API
+        if IS_CLOUD_ENV:
+            st.info("🌐 **Modo Nube:** Usando Web Speech API del navegador")
+        else:
+            st.info("💻 **Modo Local:** Usando síntesis de voz del sistema")
+
     st.divider()
 
     uploaded_file = st.file_uploader(
@@ -305,7 +311,27 @@ def main():
         "¿Para qué comida buscas una receta?",
         ("Desayuno", "Almuerzo", "Cena", "Postre", "Snack")
     )
-    
+
+    # Información sobre límites de cuota
+    with st.expander("ℹ️ **Información sobre límites de uso**", expanded=False):
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("""
+            **Google Gemini API (Gratuito):**
+            - ✅ 50 solicitudes por día
+            - ✅ Modelo: Gemini 1.5 Flash
+            - ✅ Reinicio diario automático
+            - ✅ Sin costo monetario
+            """)
+        with col2:
+            st.markdown("""
+            **Recomendaciones:**
+            - 🔄 Espera 24h si alcanzas el límite
+            - 💡 Usa imágenes claras para mejores resultados
+            - 🌐 Funciona en navegadores modernos
+            - 🎵 Audio disponible en Chrome/Firefox
+            """)
+
     # Inicializar el estado de la sesión para almacenar los datos de la receta
     if 'recipe_data' not in st.session_state:
         st.session_state.recipe_data = None
@@ -321,10 +347,35 @@ def main():
                 recipe_data = utils.get_structured_recipe(image, meal_type)
                 
                 if recipe_data:
-                    # Guardar los datos en el estado de la sesión
-                    st.session_state.recipe_data = recipe_data
+                    # Verificar si hay un error de cuota
+                    if isinstance(recipe_data, dict) and recipe_data.get("error") == "quota_exceeded":
+                        st.error("🚫 **Límite de Cuota Excedido**")
+                        st.warning(recipe_data["message"])
+                        st.info(f"⏰ **Próximo reset:** {recipe_data['reset_time']}")
+                        st.success(f"💡 **Sugerencia:** {recipe_data['suggestion']}")
+
+                        # Mostrar información adicional sobre límites
+                        with st.expander("ℹ️ Información sobre límites de Google Gemini"):
+                            st.markdown("""
+                            **Plan Gratuito de Google Gemini:**
+                            - 50 solicitudes por día
+                            - Modelo: Gemini 1.5 Flash
+                            - Reinicio diario automático
+
+                            **Opciones para continuar:**
+                            1. **Espera hasta mañana** - El contador se reinicia automáticamente
+                            2. **Actualiza tu plan** - Ve a [Google AI Studio](https://makersuite.google.com/app/apikey)
+                            3. **Usa la aplicación local** - Sin límites de cuota
+
+                            **¿Por qué ocurre esto?**
+                            La aplicación usa la API gratuita de Google Gemini, que tiene límites para evitar abuso.
+                            """)
+                        return
+                    else:
+                        # Guardar los datos en el estado de la sesión
+                        st.session_state.recipe_data = recipe_data
                 else:
-                    st.error("No se pudo generar una receta. La respuesta de la IA no fue válida. Inténtalo de nuevo.")
+                    st.error("❌ No se pudo generar una receta. La respuesta de la IA no fue válida. Inténtalo de nuevo.")
 
             except Exception as e:
                 st.error(f"Ocurrió un error inesperado: {e}")
