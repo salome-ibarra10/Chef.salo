@@ -41,7 +41,7 @@ def main():
                     
                     # Imagen del plato
                     if recipe_image_url:
-                        st.image(recipe_image_url, caption=recipe_data["recipe_name"], width='stretch')
+                        st.image(recipe_image_url, caption=recipe_data["recipe_name"], use_container_width=True)
                     
                     # Título y descripción
                     st.header(recipe_data["recipe_name"])
